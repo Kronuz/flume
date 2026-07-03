@@ -6,6 +6,11 @@ codecs, and owns the three things a file transfer needs that a buffer codec does
 the source in bounded chunks, framing the compressed output so the reader knows where each
 block and the whole transfer end, and an end-to-end integrity check.
 
+![flume: a framed, integrity-checked, compressed transfer over any channel](assets/architecture.svg)
+
+<!-- Diagram: assets/architecture.svg. Edit the D2 source below and re-render with:
+     d2 --theme 0 --pad 20 <this-source>.d2 assets/architecture.svg
+
 ```d2
 # flume: a framed, integrity-checked, compressed transfer over any channel.
 direction: down
@@ -26,6 +31,7 @@ recv: "Receiver" {
 dst: "sink (fd / stream)" { style.fill: "#faf3e6" }
 src -> sender -> chan -> recv -> dst
 ```
+-->
 
 ## Dependencies
 
