@@ -132,6 +132,23 @@ int main() {
 		check(!done, "a flipped checksum footer is rejected");
 	}
 
+	std::printf("== flume: leftover (over-read past one transfer) is recoverable ==\n");
+	// A multiplexed channel: one transfer immediately followed by other bytes. Feeding the
+	// whole thing must Done on the transfer AND hand back the trailing bytes via leftover(),
+	// so the caller's own framing can resume where flume stopped.
+	{
+		std::string channel = send_all("first transfer payload", flume::DEFAULT_BLOCK_SIZE);
+		std::string trailer = "\x05NEXT-MESSAGE-BYTES";
+		std::string output;
+		StringSink sink{output};
+		flume::Receiver<StringSink> receiver(sink);
+		std::string all = channel + trailer;
+		auto st = receiver.feed(all.data(), all.size());
+		check(st == flume::Receiver<StringSink>::Status::Done, "transfer completes despite trailing bytes");
+		check(output == "first transfer payload", "the transfer round-trips");
+		check(receiver.leftover() == trailer, "leftover() returns exactly the trailing bytes");
+	}
+
 	std::printf("\n%s (%d failures)\n", g_fail == 0 ? "PASS" : "FAIL", g_fail);
 	return g_fail == 0 ? 0 : 1;
 }

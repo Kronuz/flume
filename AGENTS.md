@@ -50,6 +50,11 @@ local compressors checkout. On macOS the keg-only Homebrew zstd/lz4/zlib need th
   bytes. Changing any of this is a wire-format change (see below).
 - **Memory stays bounded.** Sender holds one read chunk + one compressed block; Receiver holds
   only unparsed bytes. Do not accumulate the whole file anywhere.
+- **A Receiver may over-read past the footer; `leftover()` must return the excess.** When the
+  channel multiplexes a transfer with whatever follows it (e.g. the next protocol message), a
+  single `feed()` can carry bytes past the transfer's footer. On `Done`, `leftover()` returns
+  exactly those trailing bytes so the caller resumes its own framing without losing them.
+  Losing this is the classic "the receiver hangs on the next message" bug.
 
 ## Codec: Zstd by default, and it is a wire-format decision
 

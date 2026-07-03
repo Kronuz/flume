@@ -245,6 +245,11 @@ public:
 	bool done() const { return done_; }
 	bool error() const { return error_; }
 
+	// After Done, any bytes fed past the transfer's footer (the start of whatever the channel
+	// carries next) remain here -- a multiplexed caller must feed these back into its own
+	// parser rather than lose them. Empty unless a feed() over-read past the end.
+	const std::string& leftover() const { return buf_; }
+
 private:
 	Sink& sink_;
 	std::string buf_;
