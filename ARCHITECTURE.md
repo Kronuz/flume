@@ -6,6 +6,35 @@ codecs, and owns the three things a file transfer needs that a buffer codec does
 the source in bounded chunks, framing the compressed output so the reader knows where each
 block and the whole transfer end, and an end-to-end integrity check.
 
+```d2
+# flume: a framed, integrity-checked, compressed transfer over any channel.
+direction: down
+src: "source (fd / stream)" { style.fill: "#faf3e6" }
+sender: "Sender" {
+  direction: right
+  style.fill: "#e8f5ee"
+  chunk: "chunk"; codec: "codec\n(Zstd default / LZ4)"; frame: "frame\n[len][xxh32][payload]"
+  chunk -> codec -> frame
+}
+chan: "channel  (injected: socket, pipe, ...)" { style.fill: "#eef2f7" }
+recv: "Receiver" {
+  direction: right
+  style.fill: "#e8f5ee"
+  unframe: "unframe\n+ verify xxh32"; decode: "codec decode"
+  unframe -> decode
+}
+dst: "sink (fd / stream)" { style.fill: "#faf3e6" }
+src -> sender -> chan -> recv -> dst
+```
+
+## Dependencies
+
+**[compressors](https://github.com/Kronuz/compressors)** (the Zstd/LZ4 buffer-core plus
+the vendored XXH32 used for the per-frame integrity check), pulled in by CMake
+`FetchContent`; otherwise header-only. The **channel** (how bytes actually move) and the
+**codec choice** are injected by the caller, not dependencies — see
+[The codec seam](#the-codec-seam).
+
 ## The layering
 
 ```

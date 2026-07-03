@@ -53,6 +53,10 @@ Each `block_i` is `codec::compress(read_chunk_i)`, `len` is `serialise_length(bl
 XXH32 against the footer. Corruption (a flipped byte, a truncation) is caught, never silently
 accepted.
 
+## Dependencies
+
+**[compressors](https://github.com/Kronuz/compressors)** (the Zstd/LZ4 buffer-core plus the vendored XXH32 for the per-frame integrity check), via CMake `FetchContent`; otherwise header-only. The **channel** and the **codec choice** are injected by the caller, not dependencies.
+
 ## Use
 
 Both ends are channel-agnostic templates. The **Sender** drives an fd into a `Writer` sink;
