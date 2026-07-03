@@ -53,17 +53,21 @@ local compressors checkout. On macOS the keg-only Homebrew zstd/lz4/zlib need th
 
 ## Codec: Zstd by default, and it is a wire-format decision
 
-The default codec is **Zstd**, not the classic LZ4: `benchmarks/bench.cc` shows ~37% fewer
-bytes at competitive speed on a replication-like corpus (12.63x vs 7.90x). For a whole-database
-transfer the ratio is bandwidth, so this is an efficiency win, not just latency.
+The default codec is **Zstd**, not the classic LZ4: `benchmarks/bench.cc` shows ~48% fewer
+bytes than LZ4 on a replication-like corpus (15.14x vs 7.90x, at flume's default level 6). For
+a whole-database transfer the ratio is bandwidth, so this is an efficiency win, not just
+latency.
 
-**The codec is part of the wire format.** Both ends of a transfer must use the same `Codec`
-template argument. Changing the default, or mixing codecs across a version boundary, is a
-**compatibility event**: bump the enclosing protocol version and move both ends together. This
-is fine when you own both ends and are pre-production (Xapiand's cluster protocol is
-version-gated); flag it loudly otherwise. `flume.h` stays Zstd-only on the include path so a
-Zstd consumer does not drag in lz4/zlib; define `Lz4Codec`/`DeflateCodec` locally (three lines
-over the compressors helpers) only where you need interop.
+**The codec is part of the wire format; the level is not.** A Zstd frame is self-describing,
+so any level decodes with any Zstd decoder -- flume defaults to `ZstdCodec<6>` (the ratio knee)
+and a caller may raise or lower it per call site (`ZstdCodec<1>` fast, `ZstdCodec<19>` max) with
+no coordination between ends. What *both ends must match* is the `Codec` itself: changing Zstd
+-> LZ4, or mixing them across a version boundary, is a **compatibility event** -- bump the
+enclosing protocol version and move both ends together. This is fine when you own both ends and
+are pre-production (Xapiand's cluster protocol is version-gated); flag it loudly otherwise.
+`flume.h` stays Zstd-only on the include path so a Zstd consumer does not drag in lz4/zlib;
+define `Lz4Codec`/`DeflateCodec` locally (three lines over the compressors helpers) only where
+you need interop.
 
 ## Traps
 

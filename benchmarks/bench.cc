@@ -17,20 +17,13 @@
 #include "compressor_deflate.h"
 #include "flume.h"
 
-struct ZstdCodec {
-	static std::string compress(std::string_view in) { return compress_zstd(in); }
-	static std::string decompress(std::string_view in) { return decompress_zstd(in); }
-	static constexpr const char* name = "zstd (level 3)";
-};
 struct Lz4Codec {
 	static std::string compress(std::string_view in) { return compress_lz4(in); }
 	static std::string decompress(std::string_view in) { return decompress_lz4(in); }
-	static constexpr const char* name = "lz4 (classic)";
 };
 struct DeflateCodec {
 	static std::string compress(std::string_view in) { return compress_deflate(in); }
 	static std::string decompress(std::string_view in) { return decompress_deflate(in); }
-	static constexpr const char* name = "deflate/zlib";
 };
 
 using clk = std::chrono::steady_clock;
@@ -68,7 +61,7 @@ static std::string make_corpus(std::size_t target) {
 }
 
 template <typename Codec>
-static void run(const std::string& corpus, std::size_t block_size) {
+static void run(const std::string& corpus, std::size_t block_size, const char* name) {
 	std::vector<std::string_view> blocks;
 	for (std::size_t off = 0; off < corpus.size(); off += block_size) {
 		blocks.emplace_back(corpus.data() + off, std::min(block_size, corpus.size() - off));
@@ -88,8 +81,8 @@ static void run(const std::string& corpus, std::size_t block_size) {
 	double ratio = static_cast<double>(corpus.size()) / static_cast<double>(total_comp);
 	double cmbps = mb / (ms(t1 - t0) / 1000.0);
 	double dmbps = mb / (ms(t2 - t1) / 1000.0);
-	std::printf("  %-16s  ratio %5.2fx   comp %6.0f MB/s   decomp %6.0f MB/s   (%zu -> %zu bytes)\n",
-		Codec::name, ratio, cmbps, dmbps, corpus.size(), total_comp);
+	std::printf("  %-22s  ratio %5.2fx   comp %6.0f MB/s   decomp %6.0f MB/s   (%zu -> %zu bytes)\n",
+		name, ratio, cmbps, dmbps, corpus.size(), total_comp);
 	if (total_plain != corpus.size()) { std::printf("    !! decompress size mismatch\n"); }
 }
 
@@ -98,9 +91,13 @@ int main() {
 	std::string corpus = make_corpus(size);
 	std::printf("== flume codec comparison: %zu MB replication-like corpus, %zu KB blocks ==\n",
 		size / (1024 * 1024), flume::DEFAULT_BLOCK_SIZE / 1024);
-	run<Lz4Codec>(corpus, flume::DEFAULT_BLOCK_SIZE);
-	run<DeflateCodec>(corpus, flume::DEFAULT_BLOCK_SIZE);
-	run<ZstdCodec>(corpus, flume::DEFAULT_BLOCK_SIZE);
+	run<Lz4Codec>(corpus, flume::DEFAULT_BLOCK_SIZE, "lz4 (classic)");
+	run<DeflateCodec>(corpus, flume::DEFAULT_BLOCK_SIZE, "deflate/zlib");
+	run<flume::ZstdCodec<1>>(corpus, flume::DEFAULT_BLOCK_SIZE, "zstd L1 (fast)");
+	run<flume::ZstdCodec<3>>(corpus, flume::DEFAULT_BLOCK_SIZE, "zstd L3 (zstd default)");
+	run<flume::ZstdCodec<6>>(corpus, flume::DEFAULT_BLOCK_SIZE, "zstd L6 (flume default)");
+	run<flume::ZstdCodec<9>>(corpus, flume::DEFAULT_BLOCK_SIZE, "zstd L9");
 	std::printf("\nratio = original/compressed (higher = fewer bytes on the wire).\n");
+	std::printf("flume defaults Zstd to L6: the ratio knee, still faster than any normal link.\n");
 	return 0;
 }

@@ -119,8 +119,23 @@ inline bool unserialise_length(const char** p, const char* end, unsigned long lo
 // (the compressors buffer-core). Swap in an LZ4/Deflate policy for interop or a ratio/speed
 // trade without touching the framing.
 
+// flume defaults Zstd to level 6, above zstd's own default of 3: flume carries BULK files
+// over a channel where the ratio IS bandwidth, and 3 -> 6 buys ~27% fewer bytes for ~3x the
+// compress CPU (still ~350 MB/s here, faster than any normal link) -- worth it on a transfer
+// path, measured in benchmarks/bench.cc. Crucially the LEVEL is NOT part of the wire format:
+// a Zstd frame is self-describing, so any level decodes with any decoder (only the CODEC
+// choice is a wire-format decision). Override per call site -- ZstdCodec<1> for a fast/tiny
+// transfer, ZstdCodec<19> to wring out a bandwidth-starved link.
+constexpr int DEFAULT_ZSTD_LEVEL = 6;
+
+template <int Level = DEFAULT_ZSTD_LEVEL>
 struct ZstdCodec {
-	static std::string compress(std::string_view in) { return compress_zstd(in); }
+	static std::string compress(std::string_view in) {
+		std::string out;
+		::ZstdCompressData compressor(in.data(), in.size(), Level);
+		for (auto it = compressor.begin(); it; ++it) { out.append(*it); }
+		return out;
+	}
 	static std::string decompress(std::string_view in) { return decompress_zstd(in); }
 };
 
@@ -135,7 +150,7 @@ struct ZstdCodec {
 // in bounded memory: one read chunk -> one compressed block -> framed to the Writer, then the
 // zero terminator + the XXH32 footer over the uncompressed bytes. Returns false on any read or
 // write failure, true on a complete transfer.
-template <typename Writer, typename Codec = ZstdCodec>
+template <typename Writer, typename Codec = ZstdCodec<>>
 class Sender {
 	Writer& writer_;
 	int fd_;
@@ -172,7 +187,7 @@ public:
 // as channel bytes arrive; it buffers only what it cannot yet parse, decompresses each
 // complete block to the Sink, and on the terminator verifies the running XXH32 against the
 // footer. A block that straddles two feeds, or a varint split across feeds, is handled.
-template <typename Sink, typename Codec = ZstdCodec>
+template <typename Sink, typename Codec = ZstdCodec<>>
 class Receiver {
 public:
 	enum class Status { NeedMore, Done, Error };
