@@ -8,8 +8,7 @@ without ever holding the whole thing in memory.
 flume is the transport-layer counterpart to the [Kronuz/compressors](https://github.com/Kronuz/compressors)
 **buffer-core** codecs. compressors squeezes an in-memory buffer; flume owns the fd reading,
 the on-wire framing, and the end-to-end integrity check, and delegates the per-block squeeze
-to a codec policy. It is the modern replacement for the LZ4 connection codec Xapiand used for
-its `FILE_FOLLOWS` database-file transfer.
+to a codec policy.
 
 Header-only, C++20, standalone.
 
