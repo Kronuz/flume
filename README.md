@@ -1,5 +1,7 @@
 # flume
 
+[![CI](https://github.com/Kronuz/flume/actions/workflows/ci.yml/badge.svg)](https://github.com/Kronuz/flume/actions/workflows/ci.yml)
+
 Carry a file (or any fd-backed byte source) downstream over a byte channel: compressed,
 framed, integrity-checked, in bounded memory. A flume is the wooden channel that floats logs
 downstream. You feed a file in one end and it comes out the other, smaller and intact,
