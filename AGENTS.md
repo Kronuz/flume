@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Working notes for agents modifying this repository. For the design read `ARCHITECTURE.md`;
-for usage and the codec comparison read `README.md`.
+for usage read `README.md`; for the codec comparison, `docs/BENCHMARKS.md`.
 
 ## What this is
 
@@ -18,6 +18,7 @@ flume.h                 The whole library: length codec + ZstdCodec + Sender<Wri
 test/flume_test.cc      Round-trip (empty..incompressible), partial-feed, corruption detection. CTest `flume`.
 examples/pipe_file.cc   Stream a real file through a flume over a socketpair; verify byte-identical.
 benchmarks/bench.cc     Zstd vs LZ4 vs Deflate: ratio + throughput on a replication-like corpus.
+docs/BENCHMARKS.md      The codec table those runs produced (machine not recorded).
 CMakeLists.txt          Header-only INTERFACE target flume::flume; FetchContents compressors; top-level-only tests.
 ```
 

@@ -1,108 +1,120 @@
 # flume
 
 [![CI](https://github.com/Kronuz/flume/actions/workflows/ci.yml/badge.svg)](https://github.com/Kronuz/flume/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)
+![Header-only](https://img.shields.io/badge/header--only-yes-green.svg)
 
-Carry a file (or any fd-backed byte source) downstream over a byte channel: compressed,
-framed, integrity-checked, in bounded memory. A flume is the wooden channel that floats logs
-downstream. You feed a file in one end and it comes out the other, smaller and intact,
-without ever holding the whole thing in memory.
+Stream a file down any byte channel in C++20: compressed, framed, checksummed, and
+in bounded memory. Feed a file in one end; it comes out the other end smaller and
+intact. A flume is the wooden channel that floats logs downstream.
 
-flume is the transport-layer counterpart to the [Kronuz/compressors](https://github.com/Kronuz/compressors)
-**buffer-core** codecs. compressors squeezes an in-memory buffer; flume owns the fd reading,
-the on-wire framing, and the end-to-end integrity check, and delegates the per-block squeeze
-to a codec policy.
+![flume: Sender reads an fd in blocks, compresses and frames them; Receiver verifies and writes](assets/architecture.svg)
 
-Header-only, C++20, standalone.
+## ✨ Highlights
 
-## Why Zstd by default
+- 🌊 **Bounded memory**: 256 KB blocks, whatever the file size.
+- 🗜️ **Zstd level 6 by default**: about 48% fewer bytes than LZ4 at 379 MB/s on one
+  core; LZ4 and deflate are one-line codec policies away.
+- 🛡️ **End-to-end integrity**: an XXH32 over the uncompressed bytes catches a flipped
+  byte or a truncation.
+- 🔌 **Any transport**: you supply the `Writer` (socket, Asio, a reply buffer); the
+  `Receiver` accepts bytes in whatever pieces they arrive.
 
-The classic codec was LZ4. Zstd ships a much better ratio at competitive speed, and for a
-whole-database transfer the ratio *is* the bandwidth. Measured on a 32 MB replication-like
-corpus in flume's 256 KB blocks (`benchmarks/bench.cc`):
+## 📦 Installation
 
-| codec          | ratio  | compress   | decompress |
-| -------------- | ------ | ---------- | ---------- |
-| lz4 (classic)  | 7.90x  | 1671 MB/s  | 3346 MB/s  |
-| deflate/zlib   | 13.13x | 220 MB/s   | 2701 MB/s  |
-| zstd L3        | 12.63x | 1467 MB/s  | 3231 MB/s  |
-| **zstd L6 (flume default)** | **15.14x** | **379 MB/s** | **3796 MB/s** |
-| zstd L9        | 15.79x | 209 MB/s   | 3928 MB/s  |
+Requires a C++20 compiler and CMake 3.14 or newer; the Zstd, LZ4, and zlib
+development libraries for [compressors](https://github.com/Kronuz/compressors). CI
+builds it on Linux (x86_64, arm64), macOS (arm64, x86_64), and FreeBSD, plus ASan,
+UBSan, and TSan builds.
 
-flume defaults Zstd to **level 6**, above zstd's own default of 3: it carries bulk files where
-the ratio is bandwidth, and L6 is the ratio knee -- **~48% fewer bytes than LZ4** (2.22 MB vs
-4.25 MB for 32 MB) at 379 MB/s, which still saturates any normal link on one core (and
-decompress is actually *faster* at higher levels, since there is less to decode). Deflate's
-ratio is close but at 6.5x the compression time, which a data path cannot spend.
+```cmake
+include(FetchContent)
+FetchContent_Declare(flume
+  GIT_REPOSITORY https://github.com/Kronuz/flume.git
+  GIT_TAG        main)
+FetchContent_MakeAvailable(flume)
 
-**The level is a knob, not a wire-format decision.** A Zstd frame is self-describing, so any
-level decodes with any decoder -- override per call site with `ZstdCodec<1>` (fast/tiny) or
-`ZstdCodec<19>` (max ratio for a bandwidth-starved link) freely, both ends need not match. The
-*codec* (Zstd vs LZ4) is the wire-format choice; the *level* is not. LZ4/Deflate remain
-one-line policies away for interop.
-
-## The frame
-
-One transfer is a run of length-prefixed compressed blocks, a zero-length terminator, and an
-XXH32 footer over the *uncompressed* bytes:
-
-```
-[len_1][block_1] [len_2][block_2] ... [0] [xxh32]
+target_link_libraries(my_app PRIVATE flume::flume)
 ```
 
-Each `block_i` is `codec::compress(read_chunk_i)`, `len` is `serialise_length(block.size())`
-(a varint), a zero-length block terminates the stream, and the reader verifies its running
-XXH32 against the footer. Corruption (a flipped byte, a truncation) is caught, never silently
-accepted.
+On macOS, configure with `-DCMAKE_PREFIX_PATH="$(brew --prefix)"` so CMake finds the
+keg-only Homebrew compression libraries.
 
-## Dependencies
-
-**[compressors](https://github.com/Kronuz/compressors)** (the Zstd/LZ4 buffer-core plus the vendored XXH32 for the per-frame integrity check), via CMake `FetchContent`; otherwise header-only. The **channel** and the **codec choice** are injected by the caller, not dependencies.
-
-## Use
-
-Both ends are channel-agnostic templates. The **Sender** drives an fd into a `Writer` sink;
-the **Receiver** is fed channel bytes as they arrive and writes to a `Sink`.
+## 🚀 Quick start
 
 ```cpp
 #include "flume.h"
 
-// send: stream a file down `socket_fd`, compressed + framed.
-struct SocketWriter { int fd; bool write(std::string_view v) { /* write all of v */ } };
-SocketWriter w{socket_fd};
-flume::Sender<SocketWriter> sender(w, file_fd);
-sender.send();                       // true on a complete transfer
+#include <unistd.h>
 
-// receive: feed socket reads in as they arrive; reconstruct into `out_fd`.
-struct FdSink { int fd; bool write(const char* d, std::size_t n) { /* write all n */ } };
-FdSink sink{out_fd};
-flume::Receiver<FdSink> receiver(sink);
-char buf[64 * 1024];
-for (ssize_t n; (n = ::read(socket_fd, buf, sizeof buf)) > 0; ) {
-    auto st = receiver.feed(buf, n);
-    if (st == flume::Receiver<FdSink>::Status::Done) break;   // checksum verified
-    if (st == flume::Receiver<FdSink>::Status::Error) { /* corrupt / truncated */ break; }
+struct FdWriter {   // the Sender's output: any channel
+	int fd;
+	bool write(std::string_view v) { return ::write(fd, v.data(), v.size()) == ssize_t(v.size()); }
+};
+struct FdSink {     // the Receiver's output: the reconstructed file
+	int fd;
+	bool write(const char* d, std::size_t n) { return ::write(fd, d, n) == ssize_t(n); }
+};
+
+bool send_file(int file_fd, int socket_fd) {
+	FdWriter w{socket_fd};
+	return flume::Sender<FdWriter>(w, file_fd).send();
+}
+
+bool receive_file(int socket_fd, int out_fd) {
+	FdSink sink{out_fd};
+	flume::Receiver<FdSink> receiver(sink);
+	using Status = flume::Receiver<FdSink>::Status;
+	char buf[64 * 1024];
+	for (ssize_t n; (n = ::read(socket_fd, buf, sizeof buf)) > 0;) {
+		auto st = receiver.feed(buf, n);
+		if (st == Status::Done) return true;      // checksum verified
+		if (st == Status::Error) return false;    // corrupt or truncated
+	}
+	return false;
 }
 ```
 
-The `Writer` is where the transport plugs in: append to a reply buffer, `async_write` an Asio
-socket, enqueue a libev buffer. A block that straddles two `feed()` calls, or a varint split
-across them, is handled.
+Production writers must loop on short writes. `examples/pipe_file.cc` sends an 8 MB
+file over a `socketpair` and checks it arrives byte-identical.
 
-`examples/pipe_file.cc` streams a real 8 MB file through a flume over a `socketpair` and
-checks it comes out byte-identical.
+## 🧩 The frame
 
-## Build
+```
+[len_1][block_1] [len_2][block_2] ... [0] [xxh32 of the uncompressed bytes]
+```
+
+Each length is a varint, and a zero length ends the transfer. The Zstd level is not
+part of the format: any level decodes with any decoder. The codec is part of it.
+
+## 🎯 When to use it
+
+- ✅ Shipping whole files between processes or hosts: replication, snapshots, backups.
+- ❌ Several files on one connection, or resume after a drop: flume frames one
+  transfer and leaves those to the caller.
+
+## 📚 Documentation
+
+- [ARCHITECTURE.md](ARCHITECTURE.md): the layering, the frame, Sender and Receiver,
+  and the codec seam.
+- [docs/BENCHMARKS.md](docs/BENCHMARKS.md): codecs and levels compared, and why
+  level 6.
+- [AGENTS.md](AGENTS.md): repository map and invariants.
+
+## 🛠️ Building and testing
 
 ```sh
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix)"
-cmake --build build
-ctest --test-dir build
+cmake --build build && ctest --test-dir build
+./build/flume_bench
 ```
 
-Depends on [Kronuz/compressors](https://github.com/Kronuz/compressors) (fetched
-automatically; `-DFETCHCONTENT_SOURCE_DIR_COMPRESSORS=<path>` for a local checkout). On macOS
-the keg-only Homebrew compression libraries need `-DCMAKE_PREFIX_PATH="$(brew --prefix)"`.
+## 🤝 Contributing
 
-## License
+Issues and pull requests are welcome. Read [AGENTS.md](AGENTS.md) first. CI must
+pass on every platform.
 
-MIT.
+## 📄 License
+
+MIT, Copyright (c) 2026 Germán Méndez Bravo (Kronuz). See [LICENSE](LICENSE).
