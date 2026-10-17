@@ -21,7 +21,7 @@ endif()
 # --- compressors: the buffer-core codecs (Zstd/LZ4/Deflate) + the vendored streaming XXH32 ---
 # Provides compressors::compressors (compress_zstd/decompress_zstd, xxh32_stream.h) and links
 # zstd/lz4/zlib. Set -DFETCHCONTENT_SOURCE_DIR_COMPRESSORS=<path> to build against a checkout.
-FetchContent_Declare(compressors GIT_REPOSITORY https://github.com/Kronuz/compressors.git GIT_TAG main)
+FetchContent_Declare(compressors GIT_REPOSITORY https://github.com/Kronuz/compressors.git GIT_TAG ed590c87201afd270afbfbb2d58d5d467c6d23b6)
 FetchContent_MakeAvailable(compressors)
 
 # --- the flume header-only lib ---
