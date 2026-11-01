@@ -7,115 +7,155 @@ Part of [Kronuz C++ Libraries](https://github.com/Kronuz/cpp-libraries), a colle
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)
 ![Header-only](https://img.shields.io/badge/header--only-yes-green.svg)
 
-Stream a file down any byte channel in C++20: compressed, framed, checksummed, and
-in bounded memory. Feed a file in one end; it comes out the other end smaller and
-intact. A flume is the wooden channel that floats logs downstream.
+Header-only file transfer for C++20: stream a file over any byte channel as framed Zstd blocks with an end-to-end checksum.
+The Sender reads the file 256 KB at a time, so its memory does not grow with
+the file, and the Receiver accepts bytes in whatever pieces the channel
+delivers. Reach for it to ship whole files between processes or hosts:
+replication, snapshots, backups. A flume is the wooden channel that floats logs
+downstream.
 
-![flume: Sender reads an fd in blocks, compresses and frames them; Receiver verifies and writes](assets/architecture.svg)
+![flume: the Sender reads, compresses and frames 256 KB blocks; the Receiver decompresses them to the Sink and checks the XXH32](docs/flume.svg)
 
 ## ✨ Highlights
 
-- 🌊 **Bounded memory**: 256 KB blocks, whatever the file size.
-- 🗜️ **Zstd level 6 by default**: about 48% fewer bytes than LZ4 at 379 MB/s on one
-  core; LZ4 and deflate are one-line codec policies away.
-- 🛡️ **End-to-end integrity**: an XXH32 over the uncompressed bytes catches a flipped
-  byte or a truncation.
-- 🔌 **Any transport**: you supply the `Writer` (socket, Asio, a reply buffer); the
-  `Receiver` accepts bytes in whatever pieces they arrive.
-
-## 📦 Installation
-
-Requires a C++20 compiler and CMake 3.14 or newer; the Zstd, LZ4, and zlib
-development libraries for [compressors](https://github.com/Kronuz/compressors). CI
-builds it on Linux (x86_64, arm64), macOS (arm64, x86_64), and FreeBSD, plus ASan,
-UBSan, and TSan builds.
-
-```cmake
-include(FetchContent)
-FetchContent_Declare(flume
-  GIT_REPOSITORY https://github.com/Kronuz/flume.git
-  GIT_TAG        main)
-FetchContent_MakeAvailable(flume)
-
-target_link_libraries(my_app PRIVATE flume::flume)
-```
-
-On macOS, configure with `-DCMAKE_PREFIX_PATH="$(brew --prefix)"` so CMake finds the
-keg-only Homebrew compression libraries.
+- **Bounded sender memory.** One 256 KB read buffer and one compressed block,
+  whatever the file size.
+- **Zstd level 6 by default.** On the benchmark's 32 MiB JSON corpus that is a
+  15.1x ratio against 7.9x for LZ4. The level is not part of the wire format:
+  any `ZstdCodec<N>` output decodes with any Zstd decoder.
+- **End-to-end integrity.** An XXH32 over the uncompressed bytes catches a
+  flipped byte or a truncation, and a codec that throws on corrupt input becomes
+  `Status::Error`.
+- **Any transport.** The caller supplies the `Writer` and the `Sink`;
+  `Receiver::feed` handles a block or a length split across reads.
+- **A small frame.** `[len][block] ... [0][xxh32]`, with varint lengths; a zero
+  length ends the transfer.
+- **Pluggable codec.** The codec is a template policy with `compress` and
+  `decompress`; an LZ4 or deflate policy is three lines over
+  [compressors](https://github.com/Kronuz/compressors).
+- **Clean hand-off.** After `Done`, `leftover()` holds any bytes fed past the
+  footer, for a caller that carries more on the same channel.
 
 ## 🚀 Quick start
 
 ```cpp
 #include "flume.h"
 
-#include <unistd.h>
+#include <algorithm>
+#include <cstdio>
+#include <string>
+#include <string_view>
 
-struct FdWriter {   // the Sender's output: any channel
-	int fd;
-	bool write(std::string_view v) { return ::write(fd, v.data(), v.size()) == ssize_t(v.size()); }
+struct Channel {  // the Sender's Writer: a socket in real use, a string here
+	std::string bytes;
+	bool write(std::string_view v) { bytes.append(v); return true; }
 };
-struct FdSink {     // the Receiver's output: the reconstructed file
-	int fd;
-	bool write(const char* d, std::size_t n) { return ::write(fd, d, n) == ssize_t(n); }
+
+struct File {  // the Receiver's Sink: the rebuilt file
+	std::string data;
+	bool write(const char* d, std::size_t n) { data.append(d, n); return true; }
 };
 
-bool send_file(int file_fd, int socket_fd) {
-	FdWriter w{socket_fd};
-	return flume::Sender<FdWriter>(w, file_fd).send();
-}
+int main() {
+	std::FILE* f = std::tmpfile();
+	for (int i = 0; i < 100000; ++i)
+		std::fprintf(f, "GET /index.html 200 %d\n", i % 7);
+	std::fflush(f);
+	long size = std::ftell(f);
+	std::rewind(f);
 
-bool receive_file(int socket_fd, int out_fd) {
-	FdSink sink{out_fd};
-	flume::Receiver<FdSink> receiver(sink);
-	using Status = flume::Receiver<FdSink>::Status;
-	char buf[64 * 1024];
-	for (ssize_t n; (n = ::read(socket_fd, buf, sizeof buf)) > 0;) {
-		auto st = receiver.feed(buf, n);
-		if (st == Status::Done) return true;      // checksum verified
-		if (st == Status::Error) return false;    // corrupt or truncated
+	Channel channel;
+	flume::Sender<Channel> sender(channel, fileno(f));
+	if (!sender.send())
+		return 1;
+
+	File out;
+	flume::Receiver<File> receiver(out);
+	using Status = flume::Receiver<File>::Status;
+	Status st = Status::NeedMore;
+	for (std::size_t at = 0; at < channel.bytes.size() && st == Status::NeedMore; at += 1000) {
+		std::size_t n = std::min<std::size_t>(1000, channel.bytes.size() - at);
+		st = receiver.feed(channel.bytes.data() + at, n);  // bytes arrive in any pieces
 	}
-	return false;
+	std::printf("%ld bytes, %zu on the wire, %s\n", size, channel.bytes.size(),
+	            st == Status::Done ? "checksum ok" : "corrupt");
+	// 2200000 bytes, 758 on the wire, checksum ok (zstd 1.5.7)
 }
 ```
 
-Production writers must loop on short writes. `examples/pipe_file.cc` sends an 8 MB
-file over a `socketpair` and checks it arrives byte-identical.
+A socket `Writer` loops on short writes;
+[`examples/pipe_file.cc`](examples/pipe_file.cc) sends an 8 MB file over a
+`socketpair` that way and checks it arrives byte-identical.
 
-## 🧩 The frame
+## 📦 Installation
 
+Requires a C++20 compiler and CMake 3.16 or newer. It fetches
+[compressors](https://github.com/Kronuz/compressors), which needs zlib and uses
+the system Zstd and LZ4 when present (fetching them otherwise). CI builds it on
+Linux (x86_64, arm64), macOS (arm64, x86_64), and FreeBSD, plus ASan, UBSan, and
+TSan builds.
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(flume
+  GIT_REPOSITORY https://github.com/Kronuz/flume.git
+  GIT_TAG        3a49d36afecde02d8bce92588930835b020e6267)  # or main for the tip
+FetchContent_MakeAvailable(flume)
+
+target_link_libraries(my_app PRIVATE flume::flume)
 ```
-[len_1][block_1] [len_2][block_2] ... [0] [xxh32 of the uncompressed bytes]
+
+```cpp
+#include "flume.h"
 ```
 
-Each length is a varint, and a zero length ends the transfer. The Zstd level is not
-part of the format: any level decodes with any decoder. The codec is part of it.
+On macOS with Homebrew, configure with `-DCMAKE_PREFIX_PATH="$(brew --prefix)"`
+so CMake finds the compression libraries.
 
 ## 🎯 When to use it
 
-- ✅ Shipping whole files between processes or hosts: replication, snapshots, backups.
-- ❌ Several files on one connection, or resume after a drop: flume frames one
-  transfer and leaves those to the caller.
+Use it to move whole files between processes or hosts over a channel you already
+have: a socket, a pipe, or a connection's write queue.
+
+Not for:
+
+- **Several files, retries, or resume.** flume frames one transfer; multiplexing,
+  the message that announces a file, and resuming after a drop are the
+  caller's.
+- **Untrusted senders.** XXH32 detects accidents, not tampering, and the
+  Receiver buffers a block of whatever length the frame declares and
+  decompresses it without a size cap.
+- **Acting on data before `Done`.** The Sink receives each block as it
+  decompresses; only `Status::Done` says the whole file matched its checksum.
+- **Sources without a file descriptor.** The Sender reads with POSIX `::read`.
 
 ## 📚 Documentation
 
-- [ARCHITECTURE.md](ARCHITECTURE.md): the layering, the frame, Sender and Receiver,
-  and the codec seam.
-- [docs/BENCHMARKS.md](docs/BENCHMARKS.md): codecs and levels compared, and why
-  level 6.
+- [ARCHITECTURE.md](ARCHITECTURE.md): the layering, the frame, Sender and
+  Receiver, and the codec seam.
+- [docs/BENCHMARKS.md](docs/BENCHMARKS.md): codecs and Zstd levels compared on
+  the benchmark corpus.
 - [AGENTS.md](AGENTS.md): repository map and invariants.
+- [Catalog entry](https://github.com/Kronuz/cpp-libraries/blob/main/AGENTS.md#flume)
+  in Kronuz C++ Libraries.
 
 ## 🛠️ Building and testing
 
 ```sh
-cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix)"
-cmake --build build && ctest --test-dir build
+cmake -B build
+cmake --build build
+ctest --test-dir build
 ./build/flume_bench
 ```
 
+The tests, `flume_pipe_file`, and `flume_bench` build whenever flume is the
+top-level project.
+
 ## 🤝 Contributing
 
-Issues and pull requests are welcome. Read [AGENTS.md](AGENTS.md) first. CI must
-pass on every platform.
+Issues and pull requests are welcome. Read [AGENTS.md](AGENTS.md) and the
+catalog's [rules of engagement](https://github.com/Kronuz/cpp-libraries/blob/main/AGENTS.md#rules-of-engagement)
+first; CI must pass on every platform.
 
 ## 📄 License
 

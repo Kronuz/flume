@@ -6,32 +6,9 @@ codecs, and owns the three things a file transfer needs that a buffer codec does
 the source in bounded chunks, framing the compressed output so the reader knows where each
 block and the whole transfer end, and an end-to-end integrity check.
 
-![flume: a framed, integrity-checked, compressed transfer over any channel](assets/architecture.svg)
+![flume: the Sender reads, compresses and frames 256 KB blocks; the Receiver decompresses them to the Sink and checks the XXH32](docs/flume.svg)
 
-<!-- Diagram: assets/architecture.svg. Edit the D2 source below and re-render with:
-     d2 --theme 0 --pad 20 <this-source>.d2 assets/architecture.svg
-
-```d2
-# flume: a framed, integrity-checked, compressed transfer over any channel.
-direction: down
-src: "source (fd / stream)" { style.fill: "#faf3e6" }
-sender: "Sender" {
-  direction: right
-  style.fill: "#e8f5ee"
-  chunk: "chunk"; codec: "codec\n(Zstd default / LZ4)"; frame: "frame\n[len][xxh32][payload]"
-  chunk -> codec -> frame
-}
-chan: "channel  (injected: socket, pipe, ...)" { style.fill: "#eef2f7" }
-recv: "Receiver" {
-  direction: right
-  style.fill: "#e8f5ee"
-  unframe: "unframe\n+ verify xxh32"; decode: "codec decode"
-  unframe -> decode
-}
-dst: "sink (fd / stream)" { style.fill: "#faf3e6" }
-src -> sender -> chan -> recv -> dst
-```
--->
+The source is [docs/flume.d2](docs/flume.d2).
 
 ## Dependencies
 

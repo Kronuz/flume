@@ -1,0 +1,29 @@
+# flume: a file crosses any byte channel as framed Zstd blocks, checked end to end.
+# Render: d2 --layout elk --sketch --theme 302 docs/flume.d2 docs/flume.svg
+vars: { d2-config: { layout-engine: elk; theme-id: 302; sketch: true; pad: 24 } }
+grid-columns: 1
+vertical-gap: 80
+
+sender: Sender {
+  label.near: top-left
+  style.fill: "#FBFAF6"
+  grid-rows: 1
+  horizontal-gap: 70
+  read: "read(fd),\n256 KB at a time"
+  zstd: "Zstd level 6"
+  frame: "Writer::write\n[len][block]"
+  read -> zstd -> frame
+}
+
+receiver: Receiver {
+  label.near: top-left
+  style.fill: "#FBFAF6"
+  grid-rows: 1
+  horizontal-gap: 70
+  done: "XXH32 matches:\nDone"
+  unzstd: "decompress to\nSink::write"
+  feed: "feed() takes\nany pieces"
+  feed -> unzstd -> done
+}
+
+sender.frame -> receiver.feed: any channel
