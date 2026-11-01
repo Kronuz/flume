@@ -21,8 +21,8 @@ downstream.
 - **Bounded sender memory.** One 256 KB read buffer and one compressed block,
   whatever the file size.
 - **Zstd level 6 by default.** On the benchmark's 32 MiB JSON corpus that is a
-  15.1x ratio against 7.9x for LZ4, compressing at 363 MiB/s on one M4 Pro core
-  and 128 MiB/s on one i9 core. The level is not part of the wire format:
+  15.1x ratio against 7.9x for LZ4, compressing at 357 MiB/s on one M4 Pro core
+  and 131 MiB/s on one i9 core. The level is not part of the wire format:
   any `ZstdCodec<N>` output decodes with any Zstd decoder.
 - **End-to-end integrity.** An XXH32 over the uncompressed bytes catches a
   flipped byte or a truncation, and a codec that throws on corrupt input becomes
@@ -136,24 +136,50 @@ Not for:
 
 ## ⚡ Performance
 
-Codec throughput on one core, in MiB/s, and the ratio on the wire, over a 32 MiB corpus of
-replication-like JSON documents cut into flume's 256 KB blocks; best of three runs. The
-codecs are Zstd 1.5.7, LZ4 1.10.0 and zlib 1.2.12 (the macOS SDK's), which `flume_bench`
-calls through [compressors](https://github.com/Kronuz/compressors).
+`flume_bench` cuts a 32 MiB corpus of replication-like JSON documents into flume's 256 KB
+blocks and compresses and decompresses every block with each codec a `Sender` can be given.
+The row labels are those codec settings, not competing libraries: LZ4, deflate and Zstd at
+four levels are what a `Sender` or `Receiver` is built with, called through
+[compressors](https://github.com/Kronuz/compressors) from
+[Zstd](https://github.com/facebook/zstd) 1.5.7, [LZ4](https://github.com/lz4/lz4) 1.10.0
+(both from Homebrew) and [zlib](https://zlib.net/) 1.2.12 (the macOS SDK's), the same
+versions on both machines. Ratio is uncompressed size over compressed size, higher is
+better; each speed column is MiB/s of uncompressed data on one core, higher is better; the
+bold row is flume's default. Every codec gives the corpus back byte for byte: `flume_bench`
+checks every block and aborts on a mismatch. Medians of five runs, each the best of three,
+on an Apple M4 Pro (macOS, arm64) and an Intel Core i9-9980HK (macOS 15, x86-64), Apple
+clang 17, `-O3 -DNDEBUG`:
 
 | Codec | Ratio | M4 Pro compress | M4 Pro decompress | i9 compress | i9 decompress |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| LZ4 | 7.90x | 2,179 | 8,767 | 1,224 | 4,202 |
-| deflate (zlib) | 13.13x | 210 | 2,678 | 155 | 1,401 |
-| Zstd level 1 | 13.21x | 1,699 | 3,065 | 939 | 2,146 |
-| Zstd level 3 | 12.63x | 1,407 | 3,038 | 679 | 2,183 |
-| **Zstd level 6 (default)** | **15.14x** | **363** | **3,558** | **128** | **2,137** |
-| Zstd level 9 | 15.79x | 198 | 3,724 | 82 | 2,130 |
+| LZ4 | 7.90x | 2,235 | 8,238 | 1,333 | 4,541 |
+| deflate (zlib) | 13.13x | 219 | 3,445 | 151 | 1,916 |
+| Zstd level 1 | 13.21x | 1,683 | 3,392 | 862 | 2,145 |
+| Zstd level 3 | 12.63x | 1,392 | 3,430 | 616 | 2,178 |
+| **Zstd level 6 (default)** | **15.14x** | **357** | **4,078** | **131** | **2,800** |
+| Zstd level 9 | 15.79x | 195 | 4,225 | 80 | 2,969 |
 
 Level 6 puts 2.22 MB on the wire where LZ4 puts 4.25 MB, 48% fewer bytes. Compression, not
-decompression, bounds a transfer at level 6. The figures time the codecs alone: the framing
-and the XXH32 are not in them. Machines: Apple M4 Pro (arm64) and Intel Core i9-9980HK
-(x86_64), both on macOS with Apple clang 17, `-O3 -DNDEBUG`:
+decompression, bounds a transfer at level 6.
+
+No other library sends a file as framed, checksummed compressed blocks over an injected
+channel, so the framing has no comparator; the bare codec is its bound. The second table
+times one `Sender` to `Receiver` pass over an in-memory channel at the default codec (read
+the file, compress, frame, feed, decompress, check the XXH32, one thread) against the same
+Zstd level 6 applied to the same blocks with no framing and no XXH32. Both are compress plus
+decompress end to end, in MiB/s of the corpus on one core, and both rebuild the corpus byte
+for byte:
+
+| Zstd level 6 round trip | M4 Pro | i9 |
+| --- | ---: | ---: |
+| bare codec, no framing, no XXH32 | 328 | 124 |
+| flume `Sender` to `Receiver` | 303 | 116 |
+
+The framing and the XXH32 cost 7.6% of the round trip on the M4 Pro and 6.5% on the i9
+(within the i9's run-to-run spread, [docs/BENCHMARKS.md](docs/BENCHMARKS.md)), and add 519
+bytes to the 2,215,976 of the compressed blocks. The figures above the second table time the
+codecs alone. `flume_bench` prints the best of three runs, so the tables take the medians
+of five invocations:
 
 ```sh
 cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix)"
@@ -161,7 +187,8 @@ cmake --build build --target flume_bench
 ./build/flume_bench
 ```
 
-[docs/BENCHMARKS.md](docs/BENCHMARKS.md) explains the choice of level.
+[docs/BENCHMARKS.md](docs/BENCHMARKS.md) has the method, the spread of the runs and the
+choice of level.
 
 ## 📚 Documentation
 

@@ -20,6 +20,10 @@ entries are dated.
   its worst-case expansion: `block_size + block_size / 128 + 1024`).
 - The default is unchanged: `max_block` is 0, which behaves as before, trusting the sender's
   sizes. The README's "Not for" names that hazard and the cap.
+- `flume_bench` aborts unless every codec, and a `Sender` to `Receiver` pass over an in-memory
+  channel, give the corpus back byte for byte. It times that pass beside the Zstd level 6
+  round trip with no framing and no XXH32, takes the best of three runs, and prints the Zstd,
+  LZ4 and zlib versions it ran against.
 
 ### Tests
 
