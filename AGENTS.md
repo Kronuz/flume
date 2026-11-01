@@ -15,7 +15,7 @@ codec that lived in the libev networking lib.
 
 ```
 flume.h                 The whole library: length codec + ZstdCodec + Sender<Writer> + Receiver<Sink>.
-test/flume_test.cc      Round-trip (empty..incompressible), partial-feed, corruption detection. CTest `flume`.
+test/flume_test.cc      Round-trip (empty..incompressible), partial-feed, corruption detection, the opt-in block cap. CTest `flume`.
 examples/pipe_file.cc   Stream a real file through a flume over a socketpair; verify byte-identical.
 benchmarks/bench.cc     Zstd vs LZ4 vs Deflate: ratio + throughput on a replication-like corpus.
 docs/BENCHMARKS.md      The codec table those runs produced (machine not recorded).
@@ -50,7 +50,10 @@ local compressors checkout. On macOS the keg-only Homebrew zstd/lz4/zlib need th
   zero-length block terminates, the footer is the XXH32 (seed `0xCEED`) over the *uncompressed*
   bytes. Changing any of this is a wire-format change (see below).
 - **Memory stays bounded.** Sender holds one read chunk + one compressed block; Receiver holds
-  only unparsed bytes. Do not accumulate the whole file anywhere.
+  only unparsed bytes. Do not accumulate the whole file anywhere. A Receiver without
+  `max_block` believes the sender's sizes (see ARCHITECTURE.md, "The cap for untrusted
+  senders"); with it, every size the sender declares is checked before anything is waited for
+  or allocated. The default (no cap) is part of the contract: do not change it.
 - **A Receiver may over-read past the footer; `leftover()` must return the excess.** When the
   channel multiplexes a transfer with whatever follows it (e.g. the next protocol message), a
   single `feed()` can carry bytes past the transfer's footer. On `Done`, `leftover()` returns

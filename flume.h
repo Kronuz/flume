@@ -137,12 +137,21 @@ struct ZstdCodec {
 		return out;
 	}
 	static std::string decompress(std::string_view in) { return decompress_zstd(in); }
+	// Throws unless the frame records a content size of at most max_size, before allocating it.
+	static std::string decompress(std::string_view in, std::size_t max_size) { return decompress_zstd(in, max_size); }
 };
 
 // Other codecs are one-liner policies too: define an Lz4Codec / DeflateCodec (compress_lz4 /
 // compress_deflate from Kronuz/compressors) after including that codec's header, and pass it
 // as the second template argument to Sender/Receiver. flume.h stays Zstd-only so a Zstd-only
-// consumer needs neither lz4 nor zlib on the include path.
+// consumer needs neither lz4 nor zlib on the include path. A codec that also has
+// decompress(view, max_size) is bounded before it allocates when the Receiver has a cap.
+
+// The cap (Receiver's max_block) that fits a Sender with this block size: the plain block, plus
+// the most a codec expands incompressible bytes (Zstd, LZ4 and Deflate stay under 1/128 and 1 KiB).
+constexpr std::size_t max_block_for(std::size_t block_size) {
+	return block_size + block_size / 128 + 1024;
+}
 
 
 // ---- Sender: fd -> framed compressed blocks -> Writer -----------------------------------
@@ -187,12 +196,21 @@ public:
 // as channel bytes arrive; it buffers only what it cannot yet parse, decompresses each
 // complete block to the Sink, and on the terminator verifies the running XXH32 against the
 // footer. A block that straddles two feeds, or a varint split across feeds, is handled.
+//
+// By default the Receiver trusts the sender's sizes: it buffers a block of whatever length the
+// frame declares and decompresses it to whatever size the codec reports. A Receiver that reads
+// from an untrusted sender sets max_block, which bounds both: a block that declares a longer
+// compressed length, or decodes to more than max_block bytes, or a length prefix that cannot
+// complete, is Status::Error, and the buffer never holds more than max_block plus a length
+// prefix plus the bytes of one feed. max_block_for(block_size) is the cap for a Sender's block
+// size. The checksum still detects accidents only, not tampering.
 template <typename Sink, typename Codec = ZstdCodec<>>
 class Receiver {
 public:
 	enum class Status { NeedMore, Done, Error };
 
-	explicit Receiver(Sink& sink) : sink_(sink) {
+	// max_block == 0 (the default): no cap.
+	explicit Receiver(Sink& sink, std::size_t max_block = 0) : sink_(sink), max_block_(max_block) {
 		compressors::XXH32_reset(&st_, CHECKSUM_SEED);
 	}
 
@@ -206,7 +224,11 @@ public:
 			const char* end = base + buf_.size();
 			const char* q = base;
 			unsigned long long len = 0;
-			if (!unserialise_length(&q, end, len)) { return Status::NeedMore; }  // varint incomplete
+			if (!unserialise_length(&q, end, len)) {
+				// A prefix is at most MAX_PREFIX bytes: a longer unparsable run is malformed, not partial.
+				if (max_block_ != 0 && buf_.size() >= MAX_PREFIX) { return fail(); }
+				return Status::NeedMore;  // varint incomplete
+			}
 
 			if (expect_footer_) {
 				buf_.erase(0, static_cast<std::size_t>(q - base));
@@ -224,15 +246,23 @@ public:
 				continue;
 			}
 
+			if (max_block_ != 0 && len > max_block_) { return fail(); }  // before waiting for the block
+
 			if (static_cast<unsigned long long>(end - q) < len) { return Status::NeedMore; }  // block incomplete
 
 			std::string plain;
 			try {
-				plain = Codec::decompress(std::string_view(q, static_cast<std::size_t>(len)));
+				const std::string_view block(q, static_cast<std::size_t>(len));
+				if constexpr (requires { Codec::decompress(block, max_block_); }) {
+					plain = max_block_ != 0 ? Codec::decompress(block, max_block_) : Codec::decompress(block);
+				} else {
+					plain = Codec::decompress(block);
+				}
 			} catch (...) {
 				error_ = true;
 				return Status::Error;
 			}
+			if (max_block_ != 0 && plain.size() > max_block_) { return fail(); }
 			if (!sink_.write(plain.data(), plain.size())) {
 				error_ = true;
 				return Status::Error;
@@ -244,6 +274,7 @@ public:
 
 	bool done() const { return done_; }
 	bool error() const { return error_; }
+	std::size_t max_block() const { return max_block_; }
 
 	// After Done, any bytes fed past the transfer's footer (the start of whatever the channel
 	// carries next) remain here -- a multiplexed caller must feed these back into its own
@@ -251,7 +282,18 @@ public:
 	const std::string& leftover() const { return buf_; }
 
 private:
+	// The longest length prefix: 0xff and ten continuation bytes.
+	static constexpr std::size_t MAX_PREFIX = 11;
+
+	// A cap violation: Error, and the buffer is released since nothing in it will be parsed.
+	Status fail() {
+		error_ = true;
+		std::string().swap(buf_);
+		return Status::Error;
+	}
+
 	Sink& sink_;
+	std::size_t max_block_;
 	std::string buf_;
 	compressors::XXH32_state_t st_;
 	bool done_ = false;

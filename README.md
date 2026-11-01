@@ -122,9 +122,13 @@ Not for:
 - **Several files, retries, or resume.** flume frames one transfer; multiplexing,
   the message that announces a file, and resuming after a drop are the
   caller's.
-- **Untrusted senders.** XXH32 detects accidents, not tampering, and the
+- **Untrusted senders.** XXH32 detects accidents, not tampering. By default the
   Receiver buffers a block of whatever length the frame declares and
-  decompresses it without a size cap.
+  decompresses it without a size cap, so a sender can make it hold or allocate
+  as much as it likes. `Receiver(sink, max_block)` is the opt-in cap: a longer
+  declared block, a block that decodes to more, or a length prefix that cannot
+  complete is `Status::Error`. Size it with `flume::max_block_for(block_size)`;
+  it bounds memory, not who is talking.
 - **Acting on data before `Done`.** The Sink receives each block as it
   decompresses; only `Status::Done` says the whole file matched its checksum.
 - **Sources without a file descriptor.** The Sender reads with POSIX `::read`.
@@ -136,6 +140,7 @@ Not for:
 - [docs/BENCHMARKS.md](docs/BENCHMARKS.md): codecs and Zstd levels compared on
   the benchmark corpus.
 - [AGENTS.md](AGENTS.md): repository map and invariants.
+- [CHANGELOG.md](CHANGELOG.md): dated changes.
 - [Catalog entry](https://github.com/Kronuz/cpp-libraries/blob/main/AGENTS.md#flume)
   in Kronuz C++ Libraries.
 

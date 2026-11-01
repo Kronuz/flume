@@ -68,6 +68,28 @@ caught and surfaced as `Error`; corruption is never silently accepted.
 The buffer only ever holds the bytes flume has not yet been able to parse, so a well-behaved
 feed loop keeps it near one block.
 
+### The cap for untrusted senders
+
+By default the Receiver believes the sender's sizes: it waits for, and buffers, a block of
+whatever length the frame declares, and decompresses it to whatever size the codec reports.
+A sender can declare a block of a terabyte and send bytes forever, or send a few hundred
+bytes that decode to gigabytes, or send a length prefix that never completes.
+`Receiver(sink, max_block)` sets a cap, off at 0:
+
+- a declared compressed length above `max_block` is `Error` as soon as the prefix is read,
+  before any of the block is awaited;
+- a block whose decoded size exceeds `max_block` is `Error`: a codec with
+  `decompress(view, max_size)` (`ZstdCodec` has it) refuses the frame from its recorded
+  content size before allocating, and any other codec is checked after it decodes;
+- a length prefix that is still unparsable at its longest possible length (11 bytes) is
+  `Error`, where without a cap it is awaited for ever;
+- on `Error` the buffer is released, and later feeds return `Error`.
+
+With a cap the buffer holds at most `max_block`, one length prefix, and the bytes of one
+`feed()` call. `max_block_for(block_size)` is the cap that fits a Sender with that block size:
+the block plus the most any codec expands incompressible bytes. The cap bounds memory; it does
+not authenticate the sender.
+
 ## The codec seam
 
 `Codec` is a compile-time policy: `compress(string_view) -> string` and
