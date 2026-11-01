@@ -30,4 +30,6 @@ entries are dated.
   an empty buffer and nothing written, the boundary (`max_block` awaited, `max_block + 1`
   refused), the prefix at 10 and 11 bytes, a block that decodes past the cap, round trips of
   noise, zeros, text and incompressible data at three feed sizes and two block sizes with
-  `max_block_for`, and that `leftover()` still returns the bytes past the footer.
+  `max_block_for`, and that `leftover()` still returns the bytes past the footer. Removing
+  any one of the three checks (the declared length, the decoded size, the unparsable
+  prefix) fails the checks that name it.
