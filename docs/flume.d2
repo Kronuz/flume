@@ -1,6 +1,8 @@
 # flume: a file crosses any byte channel as framed Zstd blocks, checked end to end.
-# Render: d2 --layout elk --sketch --theme 302 docs/flume.d2 docs/flume.svg
-vars: { d2-config: { layout-engine: elk; theme-id: 302; sketch: true; pad: 24 } }
+# Render: d2 docs/flume.d2 docs/flume.svg
+vars: { d2-config: { layout-engine: elk; theme-id: 302; sketch: true; pad: 24; theme-overrides: { B1: "#8C7B7E"; B2: "#C25B73"; N2: "#C25B73" } } }
+style.fill: transparent
+
 grid-columns: 1
 vertical-gap: 80
 
