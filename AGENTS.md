@@ -18,7 +18,7 @@ flume.h                 The whole library: length codec + ZstdCodec + Sender<Wri
 test/flume_test.cc      Round-trip (empty..incompressible), partial-feed, corruption detection, the opt-in block cap. CTest `flume`.
 examples/pipe_file.cc   Stream a real file through a flume over a socketpair; verify byte-identical.
 benchmarks/bench.cc     Zstd vs LZ4 vs Deflate: ratio + throughput on a replication-like corpus.
-docs/BENCHMARKS.md      The codec table those runs produced (machine not recorded).
+docs/BENCHMARKS.md      The codec table those runs produce, with the machines and library versions.
 CMakeLists.txt          Header-only INTERFACE target flume::flume; FetchContents compressors; top-level-only tests.
 ```
 

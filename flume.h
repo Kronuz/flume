@@ -120,9 +120,10 @@ inline bool unserialise_length(const char** p, const char* end, unsigned long lo
 // trade without touching the framing.
 
 // flume defaults Zstd to level 6, above zstd's own default of 3: flume carries BULK files
-// over a channel where the ratio IS bandwidth, and 3 -> 6 buys ~27% fewer bytes for ~3x the
-// compress CPU (still ~350 MB/s here, faster than any normal link) -- worth it on a transfer
-// path, measured in benchmarks/bench.cc. Crucially the LEVEL is NOT part of the wire format:
+// over a channel where the ratio IS bandwidth, and 3 -> 6 buys 17% fewer bytes for 4 to 5
+// times the compress CPU (363 MiB/s on an M4 Pro core, 128 on an i9 core; see
+// docs/BENCHMARKS.md), worth it on a transfer path. Crucially the LEVEL is NOT part of the
+// wire format:
 // a Zstd frame is self-describing, so any level decodes with any decoder (only the CODEC
 // choice is a wire-format decision). Override per call site -- ZstdCodec<1> for a fast/tiny
 // transfer, ZstdCodec<19> to wring out a bandwidth-starved link.

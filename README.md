@@ -21,7 +21,8 @@ downstream.
 - **Bounded sender memory.** One 256 KB read buffer and one compressed block,
   whatever the file size.
 - **Zstd level 6 by default.** On the benchmark's 32 MiB JSON corpus that is a
-  15.1x ratio against 7.9x for LZ4. The level is not part of the wire format:
+  15.1x ratio against 7.9x for LZ4, compressing at 363 MiB/s on one M4 Pro core
+  and 128 MiB/s on one i9 core. The level is not part of the wire format:
   any `ZstdCodec<N>` output decodes with any Zstd decoder.
 - **End-to-end integrity.** An XXH32 over the uncompressed bytes catches a
   flipped byte or a truncation, and a codec that throws on corrupt input becomes
@@ -132,6 +133,35 @@ Not for:
 - **Acting on data before `Done`.** The Sink receives each block as it
   decompresses; only `Status::Done` says the whole file matched its checksum.
 - **Sources without a file descriptor.** The Sender reads with POSIX `::read`.
+
+## ⚡ Performance
+
+Codec throughput on one core, in MiB/s, and the ratio on the wire, over a 32 MiB corpus of
+replication-like JSON documents cut into flume's 256 KB blocks; best of three runs. The
+codecs are Zstd 1.5.7, LZ4 1.10.0 and zlib 1.2.12 (the macOS SDK's), which `flume_bench`
+calls through [compressors](https://github.com/Kronuz/compressors).
+
+| Codec | Ratio | M4 Pro compress | M4 Pro decompress | i9 compress | i9 decompress |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| LZ4 | 7.90x | 2,179 | 8,767 | 1,224 | 4,202 |
+| deflate (zlib) | 13.13x | 210 | 2,678 | 155 | 1,401 |
+| Zstd level 1 | 13.21x | 1,699 | 3,065 | 939 | 2,146 |
+| Zstd level 3 | 12.63x | 1,407 | 3,038 | 679 | 2,183 |
+| **Zstd level 6 (default)** | **15.14x** | **363** | **3,558** | **128** | **2,137** |
+| Zstd level 9 | 15.79x | 198 | 3,724 | 82 | 2,130 |
+
+Level 6 puts 2.22 MB on the wire where LZ4 puts 4.25 MB, 48% fewer bytes. Compression, not
+decompression, bounds a transfer at level 6. The figures time the codecs alone: the framing
+and the XXH32 are not in them. Machines: Apple M4 Pro (arm64) and Intel Core i9-9980HK
+(x86_64), both on macOS with Apple clang 17, `-O3 -DNDEBUG`:
+
+```sh
+cmake -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix)"
+cmake --build build --target flume_bench
+./build/flume_bench
+```
+
+[docs/BENCHMARKS.md](docs/BENCHMARKS.md) explains the choice of level.
 
 ## 📚 Documentation
 

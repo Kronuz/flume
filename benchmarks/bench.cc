@@ -98,6 +98,6 @@ int main() {
 	run<flume::ZstdCodec<6>>(corpus, flume::DEFAULT_BLOCK_SIZE, "zstd L6 (flume default)");
 	run<flume::ZstdCodec<9>>(corpus, flume::DEFAULT_BLOCK_SIZE, "zstd L9");
 	std::printf("\nratio = original/compressed (higher = fewer bytes on the wire).\n");
-	std::printf("flume defaults Zstd to L6: the ratio knee, still faster than any normal link.\n");
+	std::printf("flume defaults Zstd to L6: the ratio knee; see docs/BENCHMARKS.md for its cost.\n");
 	return 0;
 }
